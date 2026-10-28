@@ -1,13 +1,16 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import * as net from 'node:net'
+import { PassThrough, Readable } from 'node:stream'
 
 import {
   buildAgyCliHeaderPairs,
+  ChunkedDecodeStream,
   ContentLengthStream,
   DEFAULT_AGY_IDLE_TIMEOUT_MS,
   DEFAULT_AGY_RESPONSE_HEADER_TIMEOUT_MS,
   fetchWithAgyCliTransport,
+  toAgyBodyStream,
 } from './agy-transport.ts'
 
 type AgyWireFixture = {
@@ -112,6 +115,23 @@ async function closeServer(server: net.Server): Promise<void> {
 async function closeSocketProbe(probe: SocketProbe): Promise<void> {
   probe.getPeer()?.destroy()
   await closeServer(probe.server)
+}
+
+async function resolvesWithin(
+  promise: Promise<unknown>,
+  timeoutMs: number,
+): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      promise.then(() => true),
+      new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 async function collect(
@@ -318,6 +338,23 @@ describe('agy transport', () => {
     }
   })
 
+  describe('ChunkedDecodeStream', () => {
+    it('decodes the body and ends at the zero chunk', async () => {
+      const stream = new ChunkedDecodeStream()
+      const body = new Response(toAgyBodyStream(stream)).text()
+
+      stream.write(Buffer.from('5\r\nhello\r\n0\r\n\r\n'))
+
+      try {
+        expect(await resolvesWithin(body, 250)).toBe(true)
+        expect(await body).toBe('hello')
+        expect(stream.readableEnded).toBe(true)
+      } finally {
+        stream.destroy()
+      }
+    })
+  })
+
   describe('ContentLengthStream', () => {
     it('emits exactly contentLength bytes and ends', async () => {
       const out = await collect(new ContentLengthStream(5), [
@@ -340,6 +377,149 @@ describe('agy transport', () => {
         Buffer.from('baz'),
       ])
       expect(out.toString()).toBe('foobar')
+    })
+  })
+
+  describe('body completion while the peer holds the connection open', () => {
+    // A quota error carries a complete body while the TLS socket stays open for
+    // the next keep-alive response, so only the readable side ever ends. The
+    // body must still reach the consumer.
+
+    it('completes a content-length body before the peer closes', async () => {
+      const socket = new PassThrough()
+      const stream = new ContentLengthStream(5)
+      socket.pipe(stream)
+
+      const body = new Response(toAgyBodyStream(stream), {
+        headers: { 'Content-Length': '5' },
+        status: 429,
+      }).text()
+
+      socket.write(Buffer.from('hello'))
+
+      try {
+        expect(await resolvesWithin(body, 250)).toBe(true)
+        expect(await body).toBe('hello')
+        expect(socket.writableEnded).toBe(false)
+        expect(stream.readableEnded).toBe(true)
+        // Node's Readable.toWeb() completes on stream close, so the body stream
+        // must be closed even though the peer still holds the socket open.
+        expect(stream.destroyed).toBe(true)
+      } finally {
+        socket.destroy()
+        stream.destroy()
+      }
+    })
+
+    it('completes a chunked body before the peer closes', async () => {
+      const socket = new PassThrough()
+      const stream = new ChunkedDecodeStream()
+      socket.pipe(stream)
+
+      const body = new Response(toAgyBodyStream(stream)).text()
+
+      socket.write(Buffer.from('5\r\nhello\r\n0\r\n\r\n'))
+
+      try {
+        expect(await resolvesWithin(body, 250)).toBe(true)
+        expect(await body).toBe('hello')
+        expect(socket.writableEnded).toBe(false)
+        expect(stream.readableEnded).toBe(true)
+        expect(stream.destroyed).toBe(true)
+      } finally {
+        socket.destroy()
+        stream.destroy()
+      }
+    })
+
+    // Finishing the writable side on 'end' must not drop body bytes that the
+    // Web consumer has not read yet.
+    it('delivers a large body intact when the readable side ends early', async () => {
+      const payload = 'x'.repeat(300_000)
+      const socket = new PassThrough()
+      const stream = new ContentLengthStream(payload.length)
+      socket.pipe(stream)
+
+      const body = new Response(toAgyBodyStream(stream), {
+        headers: { 'Content-Length': String(payload.length) },
+        status: 429,
+      }).text()
+
+      socket.write(Buffer.from(payload))
+
+      try {
+        expect(await resolvesWithin(body, 250)).toBe(true)
+        expect(await body).toBe(payload)
+        expect(socket.writableEnded).toBe(false)
+      } finally {
+        socket.destroy()
+        stream.destroy()
+      }
+    })
+
+    // Why toAgyBodyStream exists: the decoders keep their readable-only end, so
+    // the Node stream stays open. Node's Readable.toWeb() then waits for a close
+    // that never arrives, and the body read stalls. bun's adapter completes on
+    // the readable 'end' event instead, so this test asserts the stream state
+    // that stalls Node rather than the stall itself; the stall is proven under
+    // Node by probes/framing-lifetime-matrix.mjs.
+    it('leaves the Node stream open after a readable-only end through plain Readable.toWeb()', async () => {
+      const socket = new PassThrough()
+      const stream = new ContentLengthStream(5)
+      socket.pipe(stream)
+
+      const body = new Response(
+        Readable.toWeb(stream) as unknown as ReadableStream<Uint8Array>,
+      ).text()
+      body.catch(() => undefined)
+
+      socket.write(Buffer.from('hello'))
+
+      try {
+        expect(await resolvesWithin(body, 100)).toBe(true)
+        expect(stream.readableEnded).toBe(true)
+        expect(stream.writableFinished).toBe(false)
+        expect(stream.destroyed).toBe(false)
+        expect(socket.writableEnded).toBe(false)
+      } finally {
+        socket.destroy()
+        stream.destroy()
+      }
+    })
+
+    // Closing the connection finished the writable side for free, which is why
+    // the readable-only end stayed hidden until a peer kept the socket open.
+    it('completes both framings when the peer closes', async () => {
+      const cases: Array<
+        [string, ContentLengthStream | ChunkedDecodeStream, Buffer]
+      > = [
+        ['content-length', new ContentLengthStream(5), Buffer.from('hello')],
+        [
+          'chunked',
+          new ChunkedDecodeStream(),
+          Buffer.from('5\r\nhello\r\n0\r\n\r\n'),
+        ],
+      ]
+
+      for (const [name, stream, wire] of cases) {
+        const socket = new PassThrough()
+        socket.pipe(stream)
+        const body = new Response(toAgyBodyStream(stream), {
+          headers: { 'Content-Length': '5' },
+          status: 429,
+        }).text()
+
+        socket.write(wire)
+        socket.end()
+
+        try {
+          expect(await resolvesWithin(body, 250), name).toBe(true)
+          expect(await body, name).toBe('hello')
+        } finally {
+          socket.destroy()
+          stream.destroy()
+        }
+      }
     })
   })
 })

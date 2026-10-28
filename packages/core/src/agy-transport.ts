@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer'
 import * as net from 'node:net'
+import type { Duplex } from 'node:stream'
 import { PassThrough, Readable, Transform } from 'node:stream'
 import * as tls from 'node:tls'
 import { createGunzip } from 'node:zlib'
@@ -441,7 +442,7 @@ export class ContentLengthStream extends Transform {
   }
 }
 
-class ChunkedDecodeStream extends Transform {
+export class ChunkedDecodeStream extends Transform {
   private buffer = Buffer.alloc(0)
 
   override _transform(
@@ -492,6 +493,37 @@ class ChunkedDecodeStream extends Transform {
   }
 }
 
+/**
+ * Convert a response body to a Web stream that completes when the body's
+ * readable side ends.
+ *
+ * The body decoders end the readable side as soon as HTTP framing says the body
+ * is complete. On a keep-alive connection the peer holds the socket open for the
+ * next response, so the decoder's writable side stays open and the Node stream
+ * never closes. `Readable.toWeb()` waits for the whole Node stream to close,
+ * which leaves every consumer of a framed body — an error response included —
+ * waiting forever for completion.
+ *
+ * Finishing the writable side once the readable side has ended lets the Node
+ * stream complete and close through its normal lifecycle. Destroying the stream
+ * here instead would fail the Web stream with a premature-close error, because
+ * the writable side is still open.
+ */
+export function toAgyBodyStream(readable: Duplex): ReadableStream<Uint8Array> {
+  const webStream = Readable.toWeb(
+    readable,
+  ) as unknown as ReadableStream<Uint8Array>
+  const finishWritableSide = () => {
+    if (!readable.writableEnded && !readable.destroyed) readable.end()
+  }
+  if (readable.readableEnded) {
+    finishWritableSide()
+  } else {
+    readable.once('end', finishWritableSide)
+  }
+  return webStream
+}
+
 function buildResponseStream(
   socket: tls.TLSSocket,
   leftover: Buffer,
@@ -506,7 +538,7 @@ function buildResponseStream(
   }
   socket.pipe(source)
 
-  let responseBody: Readable = source
+  let responseBody: Duplex = source
   if (head.chunked) {
     responseBody = responseBody.pipe(new ChunkedDecodeStream())
   } else if (typeof head.contentLength === 'number') {
@@ -569,7 +601,7 @@ function buildResponseStream(
     socket.destroy()
   })
   responseBody.once('close', cleanup)
-  return Readable.toWeb(responseBody) as unknown as ReadableStream<Uint8Array>
+  return toAgyBodyStream(responseBody)
 }
 
 export async function fetchWithAgyCliTransport(
