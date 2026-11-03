@@ -1,0 +1,14 @@
+The completion tests from the fixed tree, run with the boundary reverted.
+
+Procedure: remove the writable-side finish from toAgyBodyStream() in
+packages/core/src/agy-transport.ts so it returns a plain Readable.toWeb()
+stream, run the transport test file, then restore the file. The decoders are
+not touched: they keep their readable-only push(null) end in both runs.
+
+(fail) agy transport > body completion while the peer holds the connection open > completes a content-length body before the peer closes [0.81ms]
+(fail) agy transport > body completion while the peer holds the connection open > completes a chunked body before the peer closes [0.47ms]
+(pass) agy transport > body completion while the peer holds the connection open > delivers a large body intact when the readable side ends early [1.20ms]
+(pass) agy transport > body completion while the peer holds the connection open > leaves the Node stream open after a readable-only end through plain Readable.toWeb() [0.31ms]
+(pass) agy transport > body completion while the peer holds the connection open > completes both framings when the peer closes [0.88ms]
+ 15 pass
+ 2 fail

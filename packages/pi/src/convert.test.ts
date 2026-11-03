@@ -328,6 +328,47 @@ describe('buildGeminiRequest', () => {
     ])
   })
 
+  it('normalizes foreign tool IDs to the Claude pattern on calls and results', () => {
+    const foreignId = `call_${'a'.repeat(32)}|fc_${'b'.repeat(50)}`
+    const request = buildGeminiRequest(
+      ctx({
+        messages: [
+          assistant({
+            content: [
+              { type: 'toolCall', id: foreignId, name: 'read', arguments: {} },
+            ],
+            api: 'openai-codex-responses',
+            provider: 'openai-codex',
+            model: 'gpt-5',
+            stopReason: 'toolUse',
+          }),
+          {
+            role: 'toolResult',
+            toolCallId: foreignId,
+            toolName: 'read',
+            content: [{ type: 'text', text: 'ok' }],
+            isError: false,
+            timestamp: 1,
+          },
+        ],
+      }),
+      { provider: 'google', model: 'antigravity-claude-opus-4-6-thinking' },
+    )
+
+    const expected = `call_${'a'.repeat(32)}_fc_${'b'.repeat(23)}`
+    expect(expected).toHaveLength(64)
+    const ids = request.contents.flatMap((content) =>
+      content.parts.map((part) =>
+        'functionCall' in part
+          ? part.functionCall.id
+          : 'functionResponse' in part
+            ? part.functionResponse.id
+            : undefined,
+      ),
+    )
+    expect(ids).toEqual([expected, expected])
+  })
+
   it('maps error tool results to an error response', () => {
     const request = buildGeminiRequest(
       ctx({
@@ -619,6 +660,45 @@ describe('Pi tool schema wire normalization', () => {
       },
     })
   })
+
+  for (const model of [
+    'antigravity-claude-sonnet-5-5',
+    'antigravity-claude-opus-5-5-high',
+  ]) {
+    it(`adapts MCP argument unions for ${model} without changing Gemini schemas`, () => {
+      // This string-or-object argument union reproduces Claude's live HTTP 400.
+      const schema = {
+        type: 'object',
+        properties: {
+          args: {
+            anyOf: [
+              { type: 'string' },
+              { type: 'object', properties: {}, additionalProperties: true },
+            ],
+          },
+          mode: { anyOf: [{ const: 'text' }, { const: 'json' }] },
+          limit: { type: 'integer', minimum: 1, maximum: 20 },
+        },
+      }
+      const original = JSON.stringify(schema)
+      expect(parameters(schema, model)).toEqual({
+        type: 'OBJECT',
+        properties: {
+          args: {
+            type: 'OBJECT',
+            properties: {},
+            description: 'Accepts: string | object',
+          },
+          mode: { type: 'STRING', enum: ['text', 'json'] },
+          limit: { type: 'INTEGER', minimum: 1, maximum: 20 },
+        },
+      })
+      expect(parameters(schema).properties.args).toEqual({
+        anyOf: [{ type: 'STRING' }, { type: 'OBJECT', properties: {} }],
+      })
+      expect(JSON.stringify(schema)).toBe(original)
+    })
+  }
 
   it('moves GPT-OSS numeric constraints to descriptions', () => {
     expect(

@@ -1,0 +1,14 @@
+Live successful-stream regression check, run under Node against the local
+packages/pi build with no other extensions loaded.
+
+Command shape:
+
+  pi -ne -e <repo>/packages/pi --mode text --no-session --no-tools \
+    --model google/antigravity-gemini-3.8-flash --thinking medium \
+    -p 'Reply with exactly OK'
+
+run 1: elapsed=5s exit=0 stdout=OK stderr=empty
+run 2: elapsed=6s exit=0 stdout=OK stderr=empty
+
+A successful streaming response still completes normally with the boundary fix
+and the unchanged decoders.

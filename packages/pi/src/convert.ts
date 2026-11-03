@@ -1,4 +1,4 @@
-import { toGeminiSchema } from '@cortexkit/antigravity-auth-core'
+import { isClaudeModel, toGeminiSchema } from '@cortexkit/antigravity-auth-core'
 import type {
   AssistantMessage,
   Context,
@@ -52,6 +52,13 @@ function sanitize(text: string): string {
   return text.replace(/[\uD800-\uDFFF]/gu, '\uFFFD')
 }
 
+// Claude on Antigravity rejects tool IDs outside ^[a-zA-Z0-9_-]+$ (max 64).
+// Other providers' IDs (e.g. OpenAI Responses `call_…|fc_…`) are replayed
+// from history, so normalize calls and results the same way to keep pairs.
+function wireToolCallId(id: string): string {
+  return id.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64)
+}
+
 function convertUserParts(
   content: Array<TextContent | ImageContent>,
 ): GeminiPart[] {
@@ -94,7 +101,7 @@ function convertAssistantParts(
         functionCall: {
           name: block.name,
           args: (block.arguments ?? {}) as Record<string, unknown>,
-          id: block.id,
+          id: wireToolCallId(block.id),
         },
         ...(preserveSignedHistory && block.thoughtSignature
           ? { thoughtSignature: block.thoughtSignature }
@@ -186,7 +193,7 @@ function convertMessages(
         functionResponse: {
           name: message.toolName,
           response: toolResultResponse(message),
-          id: message.toolCallId,
+          id: wireToolCallId(message.toolCallId),
         },
       }
       // Gemini groups consecutive function responses into one user turn.
@@ -220,6 +227,8 @@ function convertTools(
         name: tool.name,
         description: tool.description,
         parameters: toGeminiSchema(tool.parameters, {
+          // AGY's Claude bridge rejects the raw string-or-object unions in MCP tools.
+          claudeValidated: isClaudeModel(model ?? ''),
           moveNumericConstraintsToDescription: model
             ?.replace(/^antigravity-/, '')
             .startsWith('gpt-oss-'),

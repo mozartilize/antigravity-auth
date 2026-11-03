@@ -1,0 +1,40 @@
+Final verification, 2026-10-22
+
+Gates: core build, core typecheck, agy-transport test file, Biome check of both
+changed files, git diff --check, and the Node framing/lifetime matrix.
+
+$ bun run --cwd packages/core build
+$ rm -rf dist && tsc -p tsconfig.build.json && bun scripts/copy-common-auth-embedded.mjs
+Copied 139 embedded common-auth files
+
+$ bun run --cwd packages/core typecheck
+$ tsc --noEmit
+
+$ bun test --isolate packages/core/src/agy-transport.test.ts
+ 17 pass
+ 0 fail
+ 45 expect() calls
+Ran 17 tests across 1 file. [198.00ms]
+
+$ bunx biome check packages/core/src/agy-transport.ts packages/core/src/agy-transport.test.ts
+Checked 2 files in 15ms. No fixes applied.
+
+$ git diff --check
+git diff --check produced no output and exited 0.
+
+$ node research/pi-agy-transport-completion/probes/framing-lifetime-matrix.mjs
+MATRIX MATCHES EXPECTATION: framing is irrelevant, connection lifetime decides,
+and the boundary fix covers every row (exit 0)
+
+The bun test file proves body delivery and stream closure per framing. The Node
+probe above proves the stall itself, because bun completes Readable.toWeb() on
+the readable end event and Node waits for stream close.
+
+Full core suite context
+
+  with this change:  949 tests, 916 pass, 33 fail, 1 error
+  HEAD content:      943 tests, 910 pass, 33 fail, 1 error
+
+The six added tests pass and the 33 failures are identical before and after this
+change. They are confined to account-store, management, roster, and repository
+suites that load the ../../dist/index.js fixture, not to the agy transport.

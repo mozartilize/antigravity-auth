@@ -1,0 +1,19 @@
+The real decoders from packages/core/src/agy-transport.ts, converted once through
+plain Readable.toWeb() (pre-fix) and once through toAgyBodyStream() (fixed),
+crossed with both framings and both connection lifetimes. Run under Node,
+because Node completes Readable.toWeb() on stream close while bun completes it
+on the readable end event.
+
+$ node research/pi-agy-transport-completion/probes/framing-lifetime-matrix.mjs
+framing        connection  conversion  result    peer        node stream
+content-length keep-alive  plain       HANG      open        OPEN
+content-length keep-alive  fixed       complete  open        closed
+content-length close       plain       complete  closed      closed
+content-length close       fixed       complete  closed      closed
+chunked        keep-alive  plain       HANG      open        OPEN
+chunked        keep-alive  fixed       complete  open        closed
+chunked        close       plain       complete  closed      closed
+chunked        close       fixed       complete  closed      closed
+
+runtime: node 24.18.0
+MATRIX MATCHES EXPECTATION: framing is irrelevant, connection lifetime decides, and the boundary fix covers every row

@@ -2098,28 +2098,34 @@ describe('Pi final tool schema wire normalization', () => {
       )
       expect(body.request.tools[0].functionDeclarations[0].parameters).toEqual({
         type: 'OBJECT',
-        title: 'Ordered input',
+        ...(model.includes('claude') ? {} : { title: 'Ordered input' }),
         propertyOrdering: ['thinking', 'count', 'label'],
         example: { label: 'x' },
         properties: {
           label: {
             type: 'STRING',
-            format: 'date-time',
-            pattern: '^x',
-            title: 'Label',
+            ...(model.includes('claude')
+              ? { description: 'format: date-time, pattern: ^x' }
+              : { format: 'date-time', pattern: '^x', title: 'Label' }),
             nullable: true,
             example: 'x',
           },
           thinking: {
             type: 'ARRAY',
-            items: {
-              anyOf: [
-                { type: 'BOOLEAN', description: 'Must be false.' },
-                { type: 'BOOLEAN', description: 'Must be true.' },
-                { type: 'INTEGER', description: 'Must be 3.' },
-                { type: 'STRING', enum: ['x'] },
-              ],
-            },
+            items: model.includes('claude')
+              ? {
+                  type: 'BOOLEAN',
+                  description:
+                    'Must be false. (Accepts: boolean | integer | string)',
+                }
+              : {
+                  anyOf: [
+                    { type: 'BOOLEAN', description: 'Must be false.' },
+                    { type: 'BOOLEAN', description: 'Must be true.' },
+                    { type: 'INTEGER', description: 'Must be 3.' },
+                    { type: 'STRING', enum: ['x'] },
+                  ],
+                },
           },
           count: model.includes('gpt-oss')
             ? {
