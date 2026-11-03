@@ -1,0 +1,30 @@
+Live Pi check of the affected error path, run under Node against the local
+packages/pi build with no other extensions loaded.
+
+Antigravity request failed: HTTP 429 {
+  "error": {
+    "code": 429,
+    "message": "Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 96h42m29s.",
+    "status": "RESOURCE_EXHAUSTED",
+    "details": [
+      {
+        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+        "reason": "QUOTA_EXHAUSTED",
+        "domain": "cloudcode-pa.googleapis.com",
+        "metadata": {
+          "uiMessage": "true",
+          "model": "claude-sonnet-5-5-medium",
+          "quotaResetDelay": "96h42m29.280341806s",
+          "quotaResetTimeStamp": "2026-10-26T15:23:50Z"
+        }
+      },
+      {
+        "@type": "type.googleapis.com/google.rpc.RetryInfo",
+        "retryDelay": "348149.280341806s"
+      }
+    ]
+  }
+}
+
+
+Command exited with status 1 after 21 seconds. stdout was empty.

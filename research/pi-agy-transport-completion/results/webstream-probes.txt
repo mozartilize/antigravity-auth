@@ -1,0 +1,7 @@
+$ node probes/content-length-webstream.mjs
+before push(null): body=timeout writable=timeout
+after nextTick(end): body=hello writable=finished
+
+$ node probes/chunked-webstream.mjs
+before push(null): body=timeout writable=timeout
+after nextTick(end): body=hello writable=finished

@@ -1,0 +1,19 @@
+Historical diagnostic excerpt, sanitized from /tmp/probe4/run2-data.out.
+The backend response arrived completely, but the extension stream never emitted
+an error or done event before Node reported unsettled top-level await.
+
+1ms    extension event: start
+792ms  dispatch entered
+1111ms TLS secure connection established
+~1707ms response head and body arrived together:
+        HTTP/1.1 429 Too Many Requests
+        Content-Type: text/event-stream
+        Content-Length: 718
+        { "error": { ... } }
+
+final process diagnostic:
+Warning: Detected unsettled top-level await
+await import('./run.mjs');
+
+Removed from this copy: trace IDs, compressed response bytes, request IDs,
+prompts, and authorization material.

@@ -1,0 +1,41 @@
+Live Pi checks after both transport fixes, 2026-10-22.
+
+M400 / Claude Opus 5.5 Low
+exit=1 elapsed=18s stdout_bytes=0
+Antigravity request failed: HTTP 429 {
+  "error": {
+    "code": 429,
+    "message": "Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 98h14m57s.",
+    "status": "RESOURCE_EXHAUSTED",
+    "details": [
+      {
+        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+        "reason": "QUOTA_EXHAUSTED",
+        "domain": "cloudcode-pa.googleapis.com",
+        "metadata": {
+          "uiMessage": "true",
+          "model": "claude-opus-5-5-low",
+          "quotaResetDelay": "98h14m57.569977456s",
+          "quotaResetTimeStamp": "2026-10-26T15:23:50Z"
+        }
+      },
+      {
+        "@type": "type.googleapis.com/google.rpc.RetryInfo",
+        "retryDelay": "353697.569977456s"
+      }
+    ]
+  }
+}
+
+M20 / Gemini 3.5 Flash Medium
+exit=1 elapsed=19s stdout_bytes=0
+Antigravity stream ended without a terminal candidate response
+
+The JSON stream contained this backend text before final normalization:
+Gemini 3.5 Flash is no longer available. Please switch to Gemini 3.7 Flash in
+the latest version of Antigravity.
+
+M319 / Gemini 3.8 Flash Medium
+exit=0 elapsed=5s
+stdout: OK
+stderr: empty
