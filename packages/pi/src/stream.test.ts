@@ -39,7 +39,6 @@ import {
   toolNames,
 } from '../../../test-fixtures/agy-cli-1.5.8/assert-identity.test'
 import neon from '../../../test-fixtures/agy-cli-1.5.9/neon-evidence.json'
-import stockPiPrompt from '../../../test-fixtures/pi-1.5.2-system-prompt.json'
 import { outageVault } from '../../core/src/__fixtures__/vault-outage.ts'
 import { expectNoOpenCodeRetryHints } from '../../opencode/src/plugin/__fixtures__/opencode-retry-hints.test.ts'
 import { rememberPackedRefresh } from './credential-cache.ts'
@@ -279,8 +278,12 @@ function terminalTextResponse(): Response {
 }
 
 describe('selected credential boundary', () => {
-  it('sends identical rewritten harness instructions on consecutive turns of one Pi session', async () => {
-    const phrase = stockPiPrompt.input.join('\n')
+  it.each([
+    'You are a coding assistant running inside pi, a coding agent harness.',
+    'You are an expert coding assistant operating inside pi, a coding agent harness.',
+    'A different harness introduction with no recognizable opening sentence.',
+  ])('sends a stable neutral preamble on consecutive turns: %s', async (preamble) => {
+    const rules = `Keep this quote unchanged: ${preamble}`
     const bodies: Record<string, any>[] = []
     fetchWithAgyCliTransportMock.mockImplementation(
       async (_url: string, init: RequestInit) => {
@@ -293,8 +296,19 @@ describe('selected credential boundary', () => {
         streamCortexKitAntigravity(
           fakeModel(),
           {
-            ...userContext(),
-            systemPrompt: phrase,
+            messages: [
+              {
+                role: 'system',
+                content: '',
+                sections: {
+                  preamble,
+                  docs: '<docs>Pi documentation</docs>',
+                  rules,
+                },
+                timestamp: 0,
+              },
+              ...userContext().messages,
+            ],
           },
           { apiKey: 'test-token', sessionId: 'harness-stable-session' },
         ),
@@ -302,11 +316,8 @@ describe('selected credential boundary', () => {
       expect(result.stopReason).toBe('stop')
     }
     expect(bodies).toHaveLength(2)
-    expect(JSON.stringify(bodies[0]!.systemInstruction)).not.toContain(
-      'running inside pi',
-    )
     expect(bodies[0]!.systemInstruction.parts[0].text).toBe(
-      stockPiPrompt.output.join('\n'),
+      `You are a coding assistant. Help users inspect files, run commands, and modify code.\n\n${rules}`,
     )
     expect(JSON.stringify(bodies[1]!.systemInstruction)).toBe(
       JSON.stringify(bodies[0]!.systemInstruction),

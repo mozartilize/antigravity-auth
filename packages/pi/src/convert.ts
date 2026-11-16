@@ -1,8 +1,4 @@
-import {
-  isClaudeModel,
-  rewriteHarnessIdentity,
-  toGeminiSchema,
-} from '@cortexkit/antigravity-auth-core'
+import { isClaudeModel, toGeminiSchema } from '@cortexkit/antigravity-auth-core'
 import type {
   AssistantMessage,
   Context,
@@ -280,8 +276,23 @@ function resolveInstructionState(context: Context): InstructionState {
     )
   }
 
+  // Use Pi's section boundary, not its version-dependent introduction wording.
+  // Antigravity answers HTTP 429 to Pi's harness self-description: the stock
+  // `preamble` and the `docs` section (Pi documentation paths). Replace the
+  // former and omit the latter. Opaque content and explicit preamble deletions
+  // or empty values are preserved.
+  const messages = context.messages.map((message) => {
+    if (message.role !== 'system' || !message.sections) return message
+    const { docs: _docs, ...sections } = message.sections
+    if (sections.preamble) {
+      sections.preamble =
+        'You are a coding assistant. Help users inspect files, run commands, and modify code.'
+    }
+    return { ...message, sections }
+  })
+
   return {
-    systemPrompt: piAi.getCurrentSystemPrompt(context.messages),
+    systemPrompt: piAi.getCurrentSystemPrompt(messages),
     tools: piAi.getCurrentTools(context.messages),
   }
 }
@@ -308,7 +319,7 @@ export function buildGeminiRequest(
   if (systemPrompt.trim()) {
     request.systemInstruction = {
       role: 'system',
-      parts: [{ text: rewriteHarnessIdentity(sanitize(systemPrompt)) }],
+      parts: [{ text: sanitize(systemPrompt) }],
     }
   }
 

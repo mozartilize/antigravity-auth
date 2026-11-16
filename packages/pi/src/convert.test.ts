@@ -37,7 +37,7 @@ function assistant(
 }
 
 describe('buildGeminiRequest', () => {
-  it('rewrites harness identity only in systemInstruction for flat and transcript contexts', () => {
+  it('preserves opaque prompts, tool descriptions, and history without guessing the preamble', () => {
     const phrase = stockPiPrompt.input.join('\n')
     const context = ctx({
       systemPrompt: phrase,
@@ -71,7 +71,7 @@ describe('buildGeminiRequest', () => {
       const request = buildGeminiRequest(input)
       expect(request.systemInstruction?.parts).toEqual([
         {
-          text: stockPiPrompt.output.join('\n'),
+          text: phrase,
         },
       ])
       expect(request.contents[0]?.parts).toEqual([{ text: phrase }])
@@ -95,6 +95,56 @@ describe('buildGeminiRequest', () => {
     }
     expect(context.systemPrompt).toBe(phrase)
   })
+  it.each([
+    'You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify code.',
+    'You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.',
+    'An entirely different introduction from a future Pi version.',
+    'Custom preamble instructions.\n\nA second custom paragraph.',
+  ])('replaces the structured preamble without matching its wording: %s', (preamble) => {
+    const rules = `Keep this quoted text unchanged: ${preamble}`
+    const user = { role: 'user' as const, content: preamble, timestamp: 1 }
+    const context = ctx({
+      messages: [
+        system({
+          content: '',
+          sections: { preamble, docs: '<docs>Pi documentation</docs>', rules },
+          toolsAdded: [tool('read')],
+          timestamp: 0,
+        }),
+        user,
+      ],
+    })
+
+    const original = structuredClone(context)
+    const request = buildGeminiRequest(context)
+    expect(request.systemInstruction).toEqual({
+      role: 'system',
+      parts: [
+        {
+          text: `You are a coding assistant. Help users inspect files, run commands, and modify code.\n\n${rules}`,
+        },
+      ],
+    })
+    expect(declarationNames(request)).toEqual(['read'])
+    expect(request.contents).toEqual([
+      { role: 'user', parts: [{ text: preamble }] },
+    ])
+    expect(context).toEqual(original)
+  })
+
+  it.each([
+    'Keep every instruction.\n\nYou are a coding assistant running inside pi, a coding agent harness.',
+    'Keep every instruction.\n\nYou are an expert coding assistant operating inside pi, a coding agent harness.',
+  ])('preserves custom opening instructions and non-leading mentions: %s', (systemPrompt) => {
+    const flat = ctx({ systemPrompt })
+    for (const context of [flat, normalizeContext(flat)]) {
+      expect(buildGeminiRequest(context).systemInstruction).toEqual({
+        role: 'system',
+        parts: [{ text: systemPrompt }],
+      })
+    }
+  })
+
   it('converts a string user message into a Gemini user content', () => {
     const request = buildGeminiRequest(
       ctx({ messages: [{ role: 'user', content: 'hello', timestamp: 0 }] }),
@@ -583,6 +633,50 @@ describe('buildGeminiRequest with Pi transcript system messages', () => {
     })
   })
 
+  it.each([
+    [null, 'additional instruction\n\nnew rules'],
+    ['', 'additional instruction\n\nnew rules'],
+    [
+      'An updated preamble with different wording.',
+      'additional instruction\n\nYou are a coding assistant. Help users inspect files, run commands, and modify code.\n\nnew rules',
+    ],
+  ])('replays preamble updates, deletions, and empty values: %s', (preamble, expected) => {
+    const context = ctx({
+      messages: [
+        system({
+          content: '',
+          sections: {
+            preamble: 'original introduction',
+            docs: '<docs>old Pi documentation</docs>',
+            rules: 'old rules',
+          },
+          toolsAdded: [tool('read')],
+          timestamp: 0,
+        }),
+        { role: 'user', content: 'hi', timestamp: 1 },
+        system({
+          content: 'additional instruction',
+          sections: {
+            preamble,
+            docs: '<docs>new Pi documentation</docs>',
+            rules: 'new rules',
+          },
+          toolsRemoved: [{ name: 'read' }],
+          toolsAdded: [tool('write')],
+          timestamp: 2,
+        }),
+      ],
+    })
+    const original = structuredClone(context)
+    const request = buildGeminiRequest(context)
+    expect(request.systemInstruction).toEqual({
+      role: 'system',
+      parts: [{ text: expected }],
+    })
+    expect(declarationNames(request)).toEqual(['write'])
+    expect(context).toEqual(original)
+  })
+
   it('applies tool additions, removals, and redefinitions in order', () => {
     const request = buildGeminiRequest(
       normalizeContext({
@@ -803,6 +897,51 @@ describe('Pi tool schema wire normalization', () => {
       expect(JSON.stringify(schema)).toBe(original)
     })
   }
+
+  it.each([
+    'antigravity-claude-sonnet-5-5',
+    'antigravity-claude-opus-5-5-low',
+  ])('uses Claude-compatible nested unions for %s', (model) => {
+    expect(
+      parameters(
+        {
+          type: 'object',
+          properties: {
+            args: {
+              description: 'MCP arguments',
+              anyOf: [
+                { type: 'string' },
+                { type: 'object', properties: {}, additionalProperties: true },
+              ],
+            },
+            formats: {
+              type: 'array',
+              items: {
+                oneOf: [
+                  { type: 'string', const: 'text' },
+                  { type: 'string', const: 'json' },
+                ],
+              },
+            },
+          },
+        },
+        model,
+      ),
+    ).toEqual({
+      type: 'OBJECT',
+      properties: {
+        args: {
+          type: 'OBJECT',
+          properties: {},
+          description: 'MCP arguments (Accepts: string | object)',
+        },
+        formats: {
+          type: 'ARRAY',
+          items: { type: 'STRING', enum: ['text', 'json'] },
+        },
+      },
+    })
+  })
 
   it('moves GPT-OSS numeric constraints to descriptions', () => {
     expect(

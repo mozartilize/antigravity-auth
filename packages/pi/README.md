@@ -119,6 +119,15 @@ Select a model with `/model` or `pi -m google/antigravity-gemini-3.8-flash`.
 
 If a request or startup refusal points to the plugin log, start Pi with `ANTIGRAVITY_CORE_CONSOLE_LOG=1` to see the underlying diagnostic in its console output.
 
+For Antigravity requests, the extension replaces Pi's nonempty structured
+`preamble` section with a neutral coding-assistant introduction and omits the
+`docs` section (Pi documentation paths); Antigravity answers HTTP 429 to either.
+This also replaces custom text in the preamble; put instructions that must be
+retained in other sections. Tools, rules, project instructions, other sections,
+and history are preserved. No matching of Pi's introduction wording is used. Opaque system
+prompts from older or resumed sessions stay unchanged; start a fresh session if
+an old prompt still triggers a rejection.
+
 This package shares its transport, OAuth, fingerprint, and request-transform
 logic with the unified OpenCode V1/GA plugin via
 [`@cortexkit/antigravity-auth-core`](../core). Local mode uses one account in Pi's
